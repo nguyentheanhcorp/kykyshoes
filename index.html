@@ -226,6 +226,10 @@ table{border-collapse:collapse;width:100%}
 .sync{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;font-size:13px;color:var(--muted)}
 .sync .dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--good);margin-right:6px;vertical-align:1px}
 .sync .dot.off{background:var(--bad)}
+#ghnBar .dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--good);margin-right:6px;vertical-align:1px}
+#ghnBar .dot.spin{background:var(--warn);animation:pulse 1s infinite alternate}
+@keyframes pulse{to{opacity:.3}}
+@media (prefers-reduced-motion:reduce){#ghnBar .dot.spin{animation:none}}
 .bars{display:flex;align-items:flex-end;gap:2px;height:120px;padding-top:6px}
 .bars .b{flex:1 1 0;min-width:0;display:flex;flex-direction:column;justify-content:flex-end;height:100%;position:relative}
 .bars .b i{display:block;background:var(--accent,var(--good));border-radius:2px 2px 0 0;min-height:1px;opacity:.85}
@@ -596,7 +600,7 @@ function load(quiet){
   if(!quiet) busy(true);
   return api('getData').then(function(json){
     if(MODE==='script') store('kk-data',json);
-    useData(json); busy(false);
+    useData(json); busy(false); ghnSync(false);
   }).catch(function(e){ busy(false); toast('Không tải được dữ liệu: '+e.message,true); });
 }
 function useData(json,cached){
@@ -687,8 +691,12 @@ $('orderSearch').addEventListener('input',function(){ renderLog(); });
 
 function renderOrders(){
   var pend=DB.orders.filter(function(o){return o.status==='Mới chốt'&&!o.ghn;}).length;
-  $('ghnBar').hidden=!(DB.raw.ghnOn&&pend);
-  if(DB.raw.ghnOn&&pend){ $('ghnBar').innerHTML='<span><b>'+pend+' đơn mới chốt</b> chưa gửi GHN</span><button type="button" class="btn sm primary" id="ghnAll">Gửi GHN tất cả</button>'; $('ghnAll').addEventListener('click',sendGhnAll); }
+  $('ghnBar').hidden=!DB.raw.ghnOn;
+  if(DB.raw.ghnOn){
+    $('ghnBar').innerHTML='<span class="small muted"><span class="dot'+(GHN_SYNCING?' spin':'')+'"></span>'+(GHN_SYNCING?'Đang hỏi GHN…':'GHN cập nhật '+esc(syncAgo(DB.raw.ghnLast)||'chưa lần nào'))+'</span>'+
+      '<span class="row" style="gap:8px;flex-wrap:wrap"><button type="button" class="btn sm" id="ghnNow"'+(GHN_SYNCING?' disabled':'')+'>Cập nhật GHN ngay</button>'+
+      (pend?'<button type="button" class="btn sm primary" id="ghnAll">Gửi GHN '+pend+' đơn mới chốt</button>':'')+'</span>';
+    $('ghnNow').addEventListener('click',function(){ ghnSync(true); }); if($('ghnAll')) $('ghnAll').addEventListener('click',sendGhnAll); }
   if(!RANGE.from) setRange(RANGE.key);
   $('rangeChips').innerHTML=RANGES.map(function(r){ return '<button type="button" class="chip" data-r="'+r[0]+'" aria-pressed="'+(RANGE.key===r[0])+'">'+r[1]+'</button>'; }).join('');
   $('rangeChips').querySelectorAll('.chip').forEach(function(c){ c.addEventListener('click',function(){
@@ -857,6 +865,17 @@ function wardHints(){ var pv=$('fProv')&&$('fProv').value; if(!pv||MODE!=='scrip
   function fill(list){ if($('fProv')&&$('fProv').value===pv) $('wardList').innerHTML=list.map(function(w){ return '<option value="'+esc(w)+'">'; }).join(''); }
   if(WARDS[pv]) return fill(WARDS[pv]);
   api('ghnWards',pv).then(function(l){ WARDS[pv]=l||[]; fill(WARDS[pv]); }).catch(function(){}); }
+var GHN_SYNCING=false;
+// Hỏi GHN ngay. auto=true khi mở web: chỉ chạy nếu lần trước đã quá 5 phút và có đơn đang đi.
+function ghnSync(manual){
+  if(MODE!=='script'||!DB||!DB.raw.ghnOn||GHN_SYNCING) return;
+  if(!manual){ var going=DB.orders.some(function(o){return o.ghn&&(o.status==='Đã gửi'||o.status==='Đang hoàn'||o.status==='Mới chốt');});
+    var m=String(DB.raw.ghnLast||'').match(/^(\d{4})-(\d\d)-(\d\d) (\d\d):(\d\d)/), age=m?(Date.now()-new Date(+m[1],m[2]-1,+m[3],+m[4],+m[5]))/60000:1e9;
+    if(!going||age<5) return; }
+  GHN_SYNCING=true; renderOrders();
+  api('ghnSyncNow').then(function(n){ GHN_SYNCING=false; if(manual||n) toast(n?'GHN: '+n+' đơn đổi trạng thái':'GHN: không có đơn nào đổi trạng thái'); return load(true); })
+    .catch(function(e){ GHN_SYNCING=false; renderOrders(); if(manual) toast(e.message,true); });
+}
 function ghnLink(code){ return 'https://donhang.ghn.vn/?order_code='+encodeURIComponent(code); }
 function sendGhnAll(){
   var list=DB.orders.filter(function(o){return o.status==='Mới chốt'&&!o.ghn;}); if(!list.length) return;
